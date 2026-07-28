@@ -82,6 +82,27 @@ defmodule FLAME.FlyBackendTest do
     assert Runner.new(backend: FLAME.FlyBackend)
   end
 
+  test "cacert_depth defaults to 5" do
+    runner = new({FlyBackend, token: "123", image: "img", app: "app"})
+    assert {:ok, init} = runner.backend_init
+    assert init.cacert_depth == 5
+  end
+
+  test "cacert_depth is configurable" do
+    runner = new({FlyBackend, token: "123", image: "img", app: "app", cacert_depth: 10})
+    assert {:ok, init} = runner.backend_init
+    assert init.cacert_depth == 10
+  end
+
+  test "cacert_depth is configurable via app env" do
+    Application.put_env(:flame, FLAME.FlyBackend, token: "123", image: "img", app: "app", cacert_depth: 3)
+    runner = Runner.new(backend: FLAME.FlyBackend)
+    assert {:ok, init} = runner.backend_init
+    assert init.cacert_depth == 3
+  after
+    Application.delete_env(:flame, FLAME.FlyBackend)
+  end
+
   test "parent backend attributes" do
     assert %FLAME.Parent{
              pid: _,

@@ -58,6 +58,12 @@ defmodule FLAME.FlyBackend do
 
   * `:metadata` - The optional map of metadata to set for the machine. Defaults to `%{}`.
 
+  * `:cacert_depth` - The maximum number of intermediate CA certificates allowed
+    in the TLS chain when connecting to the Fly.io Machines API. Defaults to `5`.
+    Let's Encrypt's "Generation Y" hierarchy serves a chain three CAs deep, which
+    exceeds the previous hardcoded limit of 2. Override only if you need a lower
+    value for compliance reasons. See https://github.com/phoenixframework/flame/issues/88.
+
   ## Environment Variables
 
   The FLAME Fly machines *do not* inherit the environment variables of the parent.
@@ -126,6 +132,7 @@ defmodule FLAME.FlyBackend do
             app: nil,
             token: nil,
             boot_timeout: nil,
+            cacert_depth: nil,
             runner_id: nil,
             remote_terminator_pid: nil,
             parent_ref: nil,
@@ -136,6 +143,13 @@ defmodule FLAME.FlyBackend do
             log: nil
 
   @retry 10
+
+  # Let's Encrypt's "Generation Y" hierarchy serves a certificate chain that is
+  # three CAs deep (leaf → YE2 → Root YE → ISRG Root X2). The previous default
+  # of 2 was sufficient for Generation X but now causes {bad_cert,
+  # max_path_length_reached}. A value of 5 leaves headroom for future chain
+  # extensions. See https://github.com/phoenixframework/flame/issues/88.
+  @default_cacert_depth 5
 
   @valid_opts [
     :app,
@@ -154,7 +168,8 @@ defmodule FLAME.FlyBackend do
     :terminator_sup,
     :log,
     :services,
-    :metadata
+    :metadata,
+    :cacert_depth
   ]
 
   @impl true
@@ -172,6 +187,7 @@ defmodule FLAME.FlyBackend do
       cpus: System.schedulers_online(),
       memory_mb: 4096,
       boot_timeout: 30_000,
+      cacert_depth: Keyword.get(conf, :cacert_depth, @default_cacert_depth),
       services: [],
       metadata: %{},
       init: %{},
@@ -261,6 +277,7 @@ defmodule FLAME.FlyBackend do
             {"Authorization", "Bearer #{state.token}"}
           ],
           connect_timeout: state.boot_timeout,
+          cacert_depth: state.cacert_depth,
           body:
             JSON.encode!(%{
               name: state.runner_node_base,
@@ -335,7 +352,7 @@ defmodule FLAME.FlyBackend do
   end
 
   defp http_post!(url, remaining_tries, opts) do
-    Keyword.validate!(opts, [:headers, :body, :connect_timeout, :content_type])
+    Keyword.validate!(opts, [:headers, :body, :connect_timeout, :content_type, :cacert_depth])
 
     headers =
       for {field, val} <- Keyword.fetch!(opts, :headers),
@@ -344,12 +361,13 @@ defmodule FLAME.FlyBackend do
     body = Keyword.fetch!(opts, :body)
     connect_timeout = Keyword.fetch!(opts, :connect_timeout)
     content_type = Keyword.fetch!(opts, :content_type)
+    cacert_depth = Keyword.get(opts, :cacert_depth, @default_cacert_depth)
 
     http_opts = [
       ssl:
         [
           verify: :verify_peer,
-          depth: 2,
+          depth: cacert_depth,
           customize_hostname_check: [
             match_fun: :public_key.pkix_verify_hostname_match_fun(:https)
           ]
@@ -373,10 +391,20 @@ defmodule FLAME.FlyBackend do
         http_post!(url, remaining_tries - 1, opts)
 
       {:ok, {{_, status, reason}, _, resp_body}} ->
-        raise "failed POST #{url} with #{inspect(status)} (#{inspect(reason)}): #{inspect(resp_body)} #{inspect(headers)}"
+        raise "failed POST #{url} with #{inspect(status)} (#{inspect(reason)}): #{inspect(resp_body)} #{inspect(redact_headers(headers))}"
 
       {:error, reason} ->
-        raise "failed POST #{url} with #{inspect(reason)} #{inspect(headers)}"
+        raise "failed POST #{url} with #{inspect(reason)} #{inspect(redact_headers(headers))}"
+    end
+  end
+
+  defp redact_headers(headers) do
+    for {field, val} <- headers do
+      if String.downcase(to_string(field)) == "authorization" do
+        {field, "[REDACTED]"}
+      else
+        {field, val}
+      end
     end
   end
 

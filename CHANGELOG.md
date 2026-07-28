@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+- Raise the default TLS certificate chain depth from 2 to 5 and make it
+  configurable via the `:cacert_depth` option. Let's Encrypt's "Generation Y"
+  hierarchy serves a chain three CAs deep, which exceeds the previous hardcoded
+  limit of 2 and caused `{bad_cert, max_path_length_reached}` on every FlyBackend
+  machine boot. (#88)
+- Redact the `Authorization` header in `http_post!` error messages so the
+  `FLY_API_TOKEN` is no longer leaked in plaintext to logs and error-reporting
+  services. (#88)
+
 ## 0.5.3 (2025-12-09)
 
 ### Bug Fixes
